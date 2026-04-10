@@ -1281,7 +1281,7 @@ def main():
     if args.output:
         out_path = os.path.abspath(args.output)
     else:
-        out_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "ccc"
+        out_dir = Path.home() / "Documents" / "ccc"
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(out_dir / "index.html")
 
