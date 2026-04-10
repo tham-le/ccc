@@ -1299,13 +1299,15 @@ def _build_html(show_all: bool = False) -> str:
 
     if not show_all:
         cwd = os.getcwd()
-        # Match projects under cwd, or the exact project that contains cwd
+        # Match projects under cwd, or the exact cwd project
         filtered = {p: c for p, c in projects.items() if p.startswith(cwd) or p == cwd}
         if filtered:
             projects = filtered
             print(f"Filtered to {cwd}", file=sys.stderr)
         else:
-            print(f"No conversations found for {cwd}, showing all", file=sys.stderr)
+            print(f"No conversations found for {cwd}", file=sys.stderr)
+            print("Use --all to show all projects", file=sys.stderr)
+            return generate_html({})
 
     total_convs = sum(len(v) for v in projects.values())
     print(f"Found {total_convs} conversations across {len(projects)} projects", file=sys.stderr)
