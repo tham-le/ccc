@@ -1365,24 +1365,13 @@ def main():
     parser.add_argument("--no-open", action="store_true", help="generate without opening browser")
     parser.add_argument("-o", "--output", help="write HTML to this path instead of a temp file")
     parser.add_argument("-a", "--all", action="store_true", help="show all projects (default: filter to current directory)")
+    parser.add_argument("-s", "--serve", nargs="?", const=8080, type=int, metavar="PORT", help="start a local server (default port: 8080)")
     args = parser.parse_args()
 
-    print("Scanning conversations...", file=sys.stderr)
-    projects = scan_all_conversations()
+    if args.serve:
+        return _serve(args.serve, show_all=args.all)
 
-    if not args.all:
-        cwd = os.getcwd()
-        filtered = {p: c for p, c in projects.items() if p.startswith(cwd) or cwd.startswith(p)}
-        if filtered:
-            projects = filtered
-            print(f"Filtered to {cwd}", file=sys.stderr)
-        else:
-            print(f"No conversations found for {cwd}, showing all", file=sys.stderr)
-
-    total_convs = sum(len(v) for v in projects.values())
-    print(f"Found {total_convs} conversations across {len(projects)} projects", file=sys.stderr)
-
-    html = generate_html(projects)
+    html = _build_html(show_all=args.all)
 
     if args.output:
         out_path = os.path.abspath(args.output)
@@ -1396,6 +1385,49 @@ def main():
 
     if not args.no_open:
         webbrowser.open(f"file://{out_path}")
+
+
+def _build_html(show_all: bool = False) -> str:
+    """Scan conversations and generate HTML."""
+    print("Scanning conversations...", file=sys.stderr)
+    projects = scan_all_conversations()
+
+    if not show_all:
+        cwd = os.getcwd()
+        filtered = {p: c for p, c in projects.items() if p.startswith(cwd) or cwd.startswith(p)}
+        if filtered:
+            projects = filtered
+            print(f"Filtered to {cwd}", file=sys.stderr)
+        else:
+            print(f"No conversations found for {cwd}, showing all", file=sys.stderr)
+
+    total_convs = sum(len(v) for v in projects.values())
+    print(f"Found {total_convs} conversations across {len(projects)} projects", file=sys.stderr)
+    return generate_html(projects)
+
+
+def _serve(port: int, show_all: bool = False):
+    """Start a local HTTP server that regenerates HTML on each request."""
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            html = _build_html(show_all=show_all)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(html.encode("utf-8"))
+
+        def log_message(self, fmt, *a):
+            print(fmt % a, file=sys.stderr)
+
+    url = f"http://localhost:{port}"
+    print(f"Serving on {url} (Ctrl+C to stop)", file=sys.stderr)
+    webbrowser.open(url)
+    try:
+        HTTPServer(("", port), Handler).serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.", file=sys.stderr)
 
 
 if __name__ == "__main__":
