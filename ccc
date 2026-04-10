@@ -544,11 +544,18 @@ body {{
 .tree-row:hover {{ background: var(--bg-hover); }}
 .tree-row.active {{ background: var(--mauve-bg); }}
 .tree-toggle {{
-  width: 14px;
+  width: 16px;
   flex-shrink: 0;
   color: var(--text-tertiary);
   font-size: 11px;
   text-align: center;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 1px 0;
+}}
+.tree-toggle:hover {{
+  background: var(--bg-hover);
+  color: var(--text);
 }}
 .tree-icon {{
   flex-shrink: 0;
@@ -578,68 +585,7 @@ body {{
   padding: 20px 24px;
 }}
 
-/* Heatmap */
-.heatmap-wrapper {{
-  margin-bottom: 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-light);
-  border-radius: 10px;
-  padding: 14px 18px;
-  box-shadow: var(--shadow);
-}}
-.heatmap-header {{
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}}
-.heatmap-header span {{
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}}
-.heatmap-toggle {{
-  padding: 2px 8px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-tertiary);
-  font-size: 10px;
-  cursor: pointer;
-}}
-.heatmap-grid {{
-  display: flex;
-  gap: 2px;
-  overflow-x: auto;
-}}
-.heatmap-week {{
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}}
-.heatmap-cell {{
-  width: 11px;
-  height: 11px;
-  border-radius: 2px;
-  background: var(--border-light);
-}}
-.heatmap-cell[data-level="1"] {{ background: var(--sage-bg); }}
-.heatmap-cell[data-level="2"] {{ background: var(--sage); opacity: 0.5; }}
-.heatmap-cell[data-level="3"] {{ background: var(--sage); opacity: 0.75; }}
-.heatmap-cell[data-level="4"] {{ background: var(--sage); }}
-.heatmap-legend {{
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 8px;
-  justify-content: flex-end;
-  font-size: 10px;
-  color: var(--text-tertiary);
-}}
-.heatmap-legend .heatmap-cell {{
-  width: 10px;
-  height: 10px;
-}}
+
 
 /* Cards */
 .conv-card {{
@@ -1056,26 +1002,39 @@ function renderSidebar() {{
   sb.innerHTML = html;
 
   // Bind click events
+  // Toggle arrow collapses/expands
+  sb.querySelectorAll('.tree-toggle').forEach(tog => {{
+    tog.addEventListener('click', (e) => {{
+      e.stopPropagation();
+      const row = tog.closest('.tree-row');
+      const nodeId = row.dataset.nodeId;
+      const children = row.parentElement.querySelector('.tree-children');
+      if (children) {{
+        if (collapsedNodes.has(nodeId)) collapsedNodes.delete(nodeId);
+        else collapsedNodes.add(nodeId);
+        render();
+      }}
+    }});
+  }});
+  // Clicking the row selects the project, or collapses if no project
   sb.querySelectorAll('.tree-row').forEach(el => {{
     el.addEventListener('click', () => {{
       const nodeId = el.dataset.nodeId;
       const hasProject = el.dataset.hasProject === 'true';
 
-      // Toggle collapse first (always, if has children)
-      const children = el.parentElement.querySelector('.tree-children');
-      if (children) {{
-        if (collapsedNodes.has(nodeId)) collapsedNodes.delete(nodeId);
-        else collapsedNodes.add(nodeId);
-      }}
-
-      // Also select project if this node has conversations
       if (hasProject) {{
         let fullPath = nodeId.startsWith('~') ? HOME + nodeId.slice(1) : '/' + nodeId;
         const proj = projects.find(p => p.path === fullPath);
         if (proj) {{ selectProject(proj.path); return; }}
       }}
 
-      render();
+      // No project — toggle collapse
+      const children = el.parentElement.querySelector('.tree-children');
+      if (children) {{
+        if (collapsedNodes.has(nodeId)) collapsedNodes.delete(nodeId);
+        else collapsedNodes.add(nodeId);
+        render();
+      }}
     }});
   }});
 }}
@@ -1141,46 +1100,6 @@ function openViewer(sessionId) {{
 function closeViewer(e) {{
   if (e && e.target !== e.currentTarget) return;
   document.getElementById('viewer-overlay').classList.remove('open');
-}}
-
-let heatmapCollapsed = false;
-
-function renderHeatmap(convs) {{
-  // Count conversations per day
-  const counts = {{}};
-  for (const c of convs) {{
-    if (!c.last_timestamp) continue;
-    const d = c.last_timestamp.slice(0, 10);
-    counts[d] = (counts[d] || 0) + 1;
-  }}
-
-  const today = new Date();
-  // Start from 52 weeks ago, aligned to Sunday
-  const start = new Date(today);
-  start.setDate(start.getDate() - start.getDay() - 52 * 7);
-
-  let weeksHtml = '';
-  const d = new Date(start);
-  while (d <= today) {{
-    let weekHtml = '';
-    for (let dow = 0; dow < 7; dow++) {{
-      const key = d.toLocaleDateString('en-CA');
-      const count = counts[key] || 0;
-      const level = count === 0 ? 0 : count <= 2 ? 1 : count <= 4 ? 2 : count <= 6 ? 3 : 4;
-      const future = d > today;
-      weekHtml += '<div class="heatmap-cell" data-level="' + (future ? 0 : level) + '" title="' + (future ? '' : count + ' conversations on ' + key) + '"></div>';
-      d.setDate(d.getDate() + 1);
-    }}
-    weeksHtml += '<div class="heatmap-week">' + weekHtml + '</div>';
-  }}
-
-  return '<div class="heatmap-wrapper">'
-    + '<div class="heatmap-header"><span>Activity</span>'
-    + '<button class="heatmap-toggle" onclick="heatmapCollapsed=!heatmapCollapsed;render()">' + (heatmapCollapsed ? 'show' : 'hide') + '</button></div>'
-    + (heatmapCollapsed ? '' :
-      '<div class="heatmap-grid">' + weeksHtml + '</div>'
-      + '<div class="heatmap-legend">Less <div class="heatmap-cell" data-level="0"></div><div class="heatmap-cell" data-level="1"></div><div class="heatmap-cell" data-level="2"></div><div class="heatmap-cell" data-level="3"></div><div class="heatmap-cell" data-level="4"></div> More</div>')
-    + '</div>';
 }}
 
 function renderProjectView() {{
@@ -1256,10 +1175,6 @@ function render() {{
   if (currentView === 'project') renderProjectView();
   else if (currentView === 'timeline') renderTimelineView();
   else renderBranchView();
-  // Prepend heatmap
-  const el = document.getElementById('content');
-  const visibleConvs = currentProject ? conversations.filter(c => c.project === currentProject) : conversations;
-  el.insertAdjacentHTML('afterbegin', renderHeatmap(visibleConvs));
   const f = filterConvs(conversations);
   document.getElementById('stats').textContent = f.length + ' conversations · ' + projects.length + ' projects';
 }}
