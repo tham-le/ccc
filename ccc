@@ -64,6 +64,45 @@ def _extract_text(content) -> str:
     return ""
 
 
+def _clean_title(text: str, git_branch: str = "") -> str:
+    """Turn a raw first message into a short readable title."""
+    import re
+    t = text.strip()
+    # Strip code blocks
+    t = re.sub(r"```[\s\S]*?```", "", t)
+    # Strip inline code
+    t = re.sub(r"`[^`]+`", "", t)
+    # Strip markdown headers
+    t = re.sub(r"^#{1,6}\s+", "", t, flags=re.MULTILINE)
+    # Strip markdown formatting
+    t = re.sub(r"\*\*|__|\*|_|~~", "", t)
+    # Strip checkboxes
+    t = re.sub(r"- \[[ x]\] ", "", t)
+    # Strip @file/path mentions
+    t = re.sub(r"@[\w~/.\-]+", "", t)
+    # Strip URLs
+    t = re.sub(r"https?://\S+", "", t)
+    # Strip HTML-like tags
+    t = re.sub(r"<[^>]+>", "", t)
+    # Collapse whitespace
+    t = re.sub(r"\s+", " ", t).strip()
+    # Take first sentence
+    for sep in [". ", "? ", "! ", "\n"]:
+        idx = t.find(sep)
+        if 10 < idx < 120:
+            t = t[:idx + 1]
+            break
+    # Truncate at word boundary
+    if len(t) > 100:
+        t = t[:100].rsplit(" ", 1)[0] + "..."
+    # Fallback to branch name
+    if len(t) < 8 and git_branch:
+        # tham/oidc-client-refactor -> oidc client refactor
+        branch = git_branch.split("/", 1)[-1] if "/" in git_branch else git_branch
+        t = branch.replace("-", " ").replace("_", " ")
+    return t.strip() or "(no title)"
+
+
 def _is_real_message(text: str) -> bool:
     """Filter out slash commands, resume picker output, and other noise."""
     t = text.strip()
@@ -158,6 +197,7 @@ def parse_conversation(jsonl_path: str) -> dict | None:
     return {
         "session_id": session_id,
         "first_message": first_user_msg or "(no message)",
+        "title": _clean_title(first_user_msg, git_branch) if first_user_msg else "(no message)",
         "first_timestamp": first_timestamp,
         "last_timestamp": last_timestamp,
         "git_branch": git_branch,
@@ -220,6 +260,7 @@ def generate_html(projects: dict) -> str:
                 "project": proj_path,
                 "session_id": c["session_id"],
                 "first_message": c["first_message"],
+                "title": c["title"],
                 "first_timestamp": c["first_timestamp"].isoformat() if c["first_timestamp"] else None,
                 "last_timestamp": c["last_timestamp"].isoformat() if c["last_timestamp"] else None,
                 "git_branch": c["git_branch"],
@@ -980,7 +1021,7 @@ function renderConvCard(c, showProject) {{
 
   return '<div class="conv-card" data-session="' + c.session_id + '" style="cursor:pointer">'
     + '<div class="top-row">'
-    + '<div class="message">' + esc(c.first_message || '(empty)') + '</div>'
+    + '<div class="message" title="' + esc(c.first_message || '') + '">' + esc(c.title || c.first_message || '(empty)') + '</div>'
     + '<div class="time">' + relativeTime(c.last_timestamp) + '</div>'
     + '</div>'
     + '<div class="bottom-row">' + tags
