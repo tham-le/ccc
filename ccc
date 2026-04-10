@@ -592,6 +592,10 @@ body {{
   border-color: var(--border);
   box-shadow: var(--shadow-hover);
 }}
+.conv-card.selected {{
+  border-color: var(--mauve);
+  box-shadow: 0 0 0 2px var(--mauve-bg);
+}}
 .conv-card .top-row {{
   display: flex;
   align-items: flex-start;
@@ -804,6 +808,7 @@ body {{
   <div class="view-toggle">
     <button id="btn-project" class="active" onclick="setView('project')">Projects</button>
     <button id="btn-timeline" onclick="setView('timeline')">Timeline</button>
+    <button id="btn-branch" onclick="setView('branch')">Branches</button>
   </div>
   <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle theme"></button>
 </div>
@@ -1111,10 +1116,43 @@ function renderTimelineView() {{
   bindCardEvents();
 }}
 
+function renderBranchView() {{
+  const el = document.getElementById('content');
+  const convs = currentProject
+    ? filterConvs(conversations.filter(c => c.project === currentProject))
+    : filterConvs(conversations);
+  if (convs.length === 0) {{
+    el.innerHTML = '<div class="empty-state"><h2>No conversations found</h2></div>';
+    return;
+  }}
+  const groups = {{}};
+  for (const c of convs) {{
+    const branch = c.git_branch || 'no branch';
+    (groups[branch] = groups[branch] || []).push(c);
+  }}
+  // Sort branches by most recent activity
+  const sorted = Object.entries(groups).sort((a, b) => {{
+    const aMax = a[1].reduce((m, c) => c.last_timestamp > m ? c.last_timestamp : m, '');
+    const bMax = b[1].reduce((m, c) => c.last_timestamp > m ? c.last_timestamp : m, '');
+    return bMax.localeCompare(aMax);
+  }});
+  let html = '';
+  for (const [branch, group] of sorted) {{
+    html += '<div class="timeline-group">'
+      + '<div class="date-header"><span class="tag branch" style="font-size:12px;padding:2px 12px">' + esc(branch) + '</span> (' + group.length + ')</div>'
+      + group.map(c => renderConvCard(c, true)).join('')
+      + '</div>';
+  }}
+  el.innerHTML = html;
+  bindCardEvents();
+}}
+
 function render() {{
+  selectedIndex = -1;
   renderSidebar();
   if (currentView === 'project') renderProjectView();
-  else renderTimelineView();
+  else if (currentView === 'timeline') renderTimelineView();
+  else renderBranchView();
   const f = filterConvs(conversations);
   document.getElementById('stats').textContent = f.length + ' conversations · ' + projects.length + ' projects';
 }}
@@ -1128,7 +1166,8 @@ function setView(view) {{
   currentView = view;
   document.getElementById('btn-project').classList.toggle('active', view === 'project');
   document.getElementById('btn-timeline').classList.toggle('active', view === 'timeline');
-  if (view === 'timeline') currentProject = null;
+  document.getElementById('btn-branch').classList.toggle('active', view === 'branch');
+  if (view !== 'project') currentProject = null;
   render();
 }}
 
@@ -1138,20 +1177,55 @@ document.getElementById('search').addEventListener('input', (e) => {{
   searchTimeout = setTimeout(() => {{ searchQuery = e.target.value.trim(); render(); }}, 150);
 }});
 
+let selectedIndex = -1;
+
+function getVisibleCards() {{
+  return Array.from(document.querySelectorAll('.conv-card[data-session]'));
+}}
+
+function updateSelection(cards) {{
+  cards.forEach((c, i) => c.classList.toggle('selected', i === selectedIndex));
+  if (selectedIndex >= 0 && selectedIndex < cards.length) {{
+    cards[selectedIndex].scrollIntoView({{ block: 'nearest' }});
+  }}
+}}
+
 document.addEventListener('keydown', (e) => {{
-  if (e.key === '/' && document.activeElement.tagName !== 'INPUT') {{
+  const inInput = document.activeElement.tagName === 'INPUT';
+  const viewerOpen = document.getElementById('viewer-overlay').classList.contains('open');
+
+  if (e.key === '/' && !inInput) {{
     e.preventDefault();
     document.getElementById('search').focus();
+    return;
   }}
+
   if (e.key === 'Escape') {{
-    if (document.getElementById('viewer-overlay').classList.contains('open')) {{
-      closeViewer();
-    }} else {{
-      document.getElementById('search').value = '';
-      searchQuery = '';
-      document.getElementById('search').blur();
-      render();
-    }}
+    if (viewerOpen) {{ closeViewer(); }}
+    else if (inInput) {{ document.getElementById('search').value = ''; searchQuery = ''; document.getElementById('search').blur(); render(); }}
+    else {{ selectedIndex = -1; updateSelection(getVisibleCards()); }}
+    return;
+  }}
+
+  if (inInput || viewerOpen) return;
+
+  const cards = getVisibleCards();
+  if (!cards.length) return;
+
+  if (e.key === 'j' || e.key === 'ArrowDown') {{
+    e.preventDefault();
+    selectedIndex = Math.min(selectedIndex + 1, cards.length - 1);
+    updateSelection(cards);
+  }}
+  if (e.key === 'k' || e.key === 'ArrowUp') {{
+    e.preventDefault();
+    selectedIndex = Math.max(selectedIndex - 1, 0);
+    updateSelection(cards);
+  }}
+  if (e.key === 'Enter' && selectedIndex >= 0) {{
+    e.preventDefault();
+    const sid = cards[selectedIndex].dataset.session;
+    if (sid) openViewer(sid);
   }}
 }});
 
