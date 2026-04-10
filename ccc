@@ -119,6 +119,22 @@ def _is_real_message(text: str) -> bool:
     return True
 
 
+def _extract_tool_paths(content) -> set:
+    """Extract file paths from tool_use blocks."""
+    paths = set()
+    if not isinstance(content, list):
+        return paths
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        inp = block.get("input", {})
+        for key in ("file_path", "path", "file"):
+            val = inp.get(key, "")
+            if isinstance(val, str) and val.startswith("/"):
+                paths.add(val)
+    return paths
+
+
 def parse_conversation(jsonl_path: str) -> dict | None:
     """Extract metadata from a conversation JSONL file."""
     try:
@@ -138,6 +154,8 @@ def parse_conversation(jsonl_path: str) -> dict | None:
     user_msg_count = 0
     assistant_msg_count = 0
     messages = []
+    cwds = set()
+    files_touched = set()
 
     for line in lines:
         try:
@@ -167,6 +185,10 @@ def parse_conversation(jsonl_path: str) -> dict | None:
             if last_timestamp is None or ts > last_timestamp:
                 last_timestamp = ts
 
+        cwd = entry.get("cwd")
+        if cwd:
+            cwds.add(cwd)
+
         if entry_type == "user":
             user_msg_count += 1
             if not git_branch:
@@ -187,6 +209,7 @@ def parse_conversation(jsonl_path: str) -> dict | None:
             text = _extract_text(content)
             if text:
                 messages.append({"role": "assistant", "text": text[:2000]})
+            files_touched.update(_extract_tool_paths(content))
 
     if user_msg_count == 0:
         return None
@@ -204,7 +227,22 @@ def parse_conversation(jsonl_path: str) -> dict | None:
         "assistant_messages": assistant_msg_count,
         "size_kb": size_kb,
         "messages": messages[:100],
+        "cwd": sorted(cwds),
+        "files_touched": sorted(files_touched)[:50],
     }
+
+
+def _load_sessions_index(project_dir: Path) -> dict:
+    """Load sessions-index.json and return {session_id: entry}."""
+    idx_path = project_dir / "sessions-index.json"
+    if not idx_path.is_file():
+        return {}
+    try:
+        with open(idx_path) as f:
+            data = json.load(f)
+        return {e["sessionId"]: e for e in data.get("entries", [])}
+    except (json.JSONDecodeError, KeyError, OSError):
+        return {}
 
 
 def scan_all_conversations() -> dict:
@@ -218,13 +256,27 @@ def scan_all_conversations() -> dict:
         if not project_dir.is_dir():
             continue
 
-        project_path = decode_project_dir(project_dir.name)
+        # Use sessions-index.json for originalPath if available
+        index = _load_sessions_index(project_dir)
+        if index:
+            first_entry = next(iter(index.values()))
+            project_path = first_entry.get("projectPath") or decode_project_dir(project_dir.name)
+        else:
+            project_path = decode_project_dir(project_dir.name)
+
         jsonl_files = list(project_dir.glob("*.jsonl"))
 
         for jf in jsonl_files:
             conv = parse_conversation(str(jf))
             if conv:
                 conv["project"] = project_path
+                # Enrich with sessions-index data (summary is gold)
+                sid = conv["session_id"]
+                if sid in index:
+                    idx_entry = index[sid]
+                    summary = idx_entry.get("summary", "")
+                    if summary:
+                        conv["title"] = summary
                 projects[project_path].append(conv)
 
     for proj in projects:
@@ -267,6 +319,8 @@ def generate_html(projects: dict) -> str:
                 "assistant_messages": c["assistant_messages"],
                 "size_kb": round(c["size_kb"], 1),
                 "messages": c.get("messages", []),
+                "cwd": c.get("cwd", []),
+                "files_touched": c.get("files_touched", []),
             })
 
     all_conversations.sort(key=lambda c: c["last_timestamp"] or "0", reverse=True)
@@ -1070,11 +1124,33 @@ function openViewer(sessionId) {{
   const title = document.getElementById('viewer-title');
   const msgs = document.getElementById('viewer-messages');
 
-  title.textContent = (conv.first_message || '(empty)').slice(0, 80);
+  title.textContent = (conv.title || conv.first_message || '(empty)').slice(0, 80);
 
   let html = '';
+
+  // Session info header
+  const infoParts = [];
+  if (conv.git_branch) infoParts.push('<span class="tag branch">' + esc(conv.git_branch) + '</span>');
+  if (conv.cwd && conv.cwd.length > 0) infoParts.push('<span class="tag project-tag">' + esc(shortPath(conv.cwd[0])) + '</span>');
+  infoParts.push('<span class="tag msgs">' + conv.user_messages + ' msgs</span>');
+  infoParts.push('<span class="tag size">' + formatSize(conv.size_kb) + '</span>');
+
+  html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">' + infoParts.join('') + '</div>';
+
+  // Files touched
+  if (conv.files_touched && conv.files_touched.length > 0) {{
+    html += '<details style="margin-bottom:14px;font-size:12px">'
+      + '<summary style="cursor:pointer;color:var(--text-secondary);font-weight:600">Files touched (' + conv.files_touched.length + ')</summary>'
+      + '<div style="margin-top:6px;padding:8px 12px;background:var(--bg-sidebar);border-radius:6px;font-family:monospace;font-size:11px;line-height:1.8">';
+    for (const f of conv.files_touched) {{
+      html += esc(shortPath(f)) + '<br>';
+    }}
+    html += '</div></details>';
+  }}
+
+  // Messages
   if (!conv.messages || conv.messages.length === 0) {{
-    html = '<div class="empty-state"><p>No messages to display</p></div>';
+    html += '<div class="empty-state"><p>No messages to display</p></div>';
   }} else {{
     for (const m of conv.messages) {{
       html += '<div class="msg ' + m.role + '">'
