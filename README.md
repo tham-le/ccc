@@ -40,6 +40,8 @@ ccc -o file.html     # save to specific path
 
 Run `ccc` inside a project folder and it filters to that project's conversations. Use `--all` to see everything.
 
+> **Note:** Some browsers block `file://` access to hidden paths (`~/.cache`, `~/.local`). By default `ccc` writes to `~/Documents/ccc/index.html` which works everywhere. If your browser still blocks it, use `ccc --serve` instead — it serves over `http://localhost` which browsers always allow.
+
 ## Features
 
 **Three views** — switch between Projects, Timeline, and Branches
