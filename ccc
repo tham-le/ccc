@@ -22,6 +22,76 @@ PROJECTS_DIR = CLAUDE_DIR / "projects"
 HOME = str(Path.home())
 
 
+def load_user_config() -> dict:
+    """Load user name and settings from config.toml and settings.json."""
+    config = {"name": ""}
+    toml_path = CLAUDE_DIR / "config.toml"
+    if toml_path.is_file():
+        try:
+            for line in toml_path.read_text().splitlines():
+                if line.strip().startswith("name"):
+                    config["name"] = line.split("=", 1)[1].strip().strip('"')
+        except OSError:
+            pass
+    return config
+
+
+def load_tasks(session_id: str) -> list:
+    """Load task list for a session."""
+    task_dir = CLAUDE_DIR / "tasks" / session_id
+    if not task_dir.is_dir():
+        return []
+    tasks = []
+    for tf in sorted(task_dir.glob("*.json"), key=lambda f: int(f.stem) if f.stem.isdigit() else 0):
+        try:
+            with open(tf) as f:
+                task = json.load(f)
+            tasks.append({"subject": task.get("subject", ""), "status": task.get("status", "")})
+        except (json.JSONDecodeError, OSError):
+            continue
+    return tasks
+
+
+def load_todos(session_id: str) -> list:
+    """Load todo list for a session."""
+    todo_file = CLAUDE_DIR / "todos" / f"{session_id}.json"
+    # Also check agent-prefixed variants
+    if not todo_file.is_file():
+        candidates = list((CLAUDE_DIR / "todos").glob(f"{session_id}*.json"))
+        if candidates:
+            todo_file = candidates[0]
+        else:
+            return []
+    try:
+        with open(todo_file) as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return [{"content": t.get("content", ""), "status": t.get("status", "")} for t in data]
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def load_plans() -> dict:
+    """Load all plans, return {slug: title} mapping."""
+    plans_dir = CLAUDE_DIR / "plans"
+    plans = {}
+    if not plans_dir.is_dir():
+        return plans
+    for pf in plans_dir.glob("*.md"):
+        slug = pf.stem
+        try:
+            title = ""
+            for line in pf.read_text().splitlines()[:5]:
+                if line.startswith("# "):
+                    title = line[2:].strip()
+                    break
+            plans[slug] = title or slug
+        except OSError:
+            plans[slug] = slug
+    return plans
+
+
 def decode_project_dir(dirname: str) -> str:
     """Convert project dir name back to path: -home-user-foo -> /home/user/foo
 
@@ -252,6 +322,8 @@ def scan_all_conversations() -> dict:
     if not PROJECTS_DIR.is_dir():
         return projects
 
+    plans = load_plans()
+
     for project_dir in sorted(PROJECTS_DIR.iterdir()):
         if not project_dir.is_dir():
             continue
@@ -270,13 +342,30 @@ def scan_all_conversations() -> dict:
             conv = parse_conversation(str(jf))
             if conv:
                 conv["project"] = project_path
-                # Enrich with sessions-index data (summary is gold)
                 sid = conv["session_id"]
+
+                # Enrich with sessions-index data
                 if sid in index:
                     idx_entry = index[sid]
                     summary = idx_entry.get("summary", "")
                     if summary:
                         conv["title"] = summary
+
+                # Load tasks and todos
+                tasks = load_tasks(sid)
+                todos = load_todos(sid)
+                conv["tasks"] = tasks
+                conv["todos"] = todos
+
+                # Detect plan (check if any file in files_touched is a plan)
+                conv["plan"] = ""
+                for fp in conv.get("files_touched", []):
+                    if "/.claude/plans/" in fp:
+                        slug = Path(fp).stem
+                        if slug in plans:
+                            conv["plan"] = plans[slug]
+                            break
+
                 projects[project_path].append(conv)
 
     for proj in projects:
@@ -321,6 +410,9 @@ def generate_html(projects: dict) -> str:
                 "messages": c.get("messages", []),
                 "cwd": c.get("cwd", []),
                 "files_touched": c.get("files_touched", []),
+                "tasks": c.get("tasks", []),
+                "todos": c.get("todos", []),
+                "plan": c.get("plan", ""),
             })
 
     all_conversations.sort(key=lambda c: c["last_timestamp"] or "0", reverse=True)
@@ -335,9 +427,12 @@ def generate_html(projects: dict) -> str:
         s = json.dumps(obj, ensure_ascii=True)
         return s.replace("</", "<\\/")
 
+    user_config = load_user_config()
+
     conversations_json = safe_json(all_conversations)
     projects_json = safe_json([{"path": p, **s} for p, s in sorted_projects])
     home_json = json.dumps(HOME)
+    user_json = safe_json(user_config)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -865,6 +960,7 @@ body {{
     <input type="text" id="search" placeholder="Search conversations... (press /)" autocomplete="off">
   </div>
   <div class="stats" id="stats"></div>
+  <div class="stats" id="user-greeting"></div>
   <div class="view-toggle">
     <button id="btn-project" onclick="setView('project')">Projects</button>
     <button id="btn-timeline" onclick="setView('timeline')">Timeline</button>
@@ -892,6 +988,7 @@ body {{
 const conversations = {conversations_json};
 const projects = {projects_json};
 const HOME = {home_json};
+const USER = {user_json};
 
 let currentView = 'branch';
 let currentProject = null;
@@ -1088,8 +1185,14 @@ function renderConvCard(c, showProject) {{
   let tags = '';
   if (showProject) tags += '<span class="tag project-tag">' + esc(shortPath(c.project)) + '</span>';
   if (c.git_branch) tags += '<span class="tag branch">' + esc(c.git_branch) + '</span>';
+  if (c.plan) tags += '<span class="tag" style="background:var(--coral-bg);color:var(--coral)">' + esc(c.plan) + '</span>';
   tags += '<span class="tag msgs">' + c.user_messages + ' msgs</span>';
   tags += '<span class="tag size">' + formatSize(c.size_kb) + '</span>';
+  // Task progress
+  if (c.tasks && c.tasks.length > 0) {{
+    const done = c.tasks.filter(t => t.status === 'completed').length;
+    tags += '<span class="tag" style="background:var(--sage-bg);color:var(--sage)">' + done + '/' + c.tasks.length + ' tasks</span>';
+  }}
 
   return '<div class="conv-card" data-session="' + c.session_id + '" style="cursor:pointer">'
     + '<div class="top-row">'
@@ -1136,6 +1239,40 @@ function openViewer(sessionId) {{
   infoParts.push('<span class="tag size">' + formatSize(conv.size_kb) + '</span>');
 
   html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">' + infoParts.join('') + '</div>';
+
+  // Plan
+  if (conv.plan) {{
+    html += '<div style="margin-bottom:12px;padding:8px 12px;background:var(--coral-bg);border-radius:6px;font-size:12px;color:var(--coral)">'
+      + '<strong>Plan:</strong> ' + esc(conv.plan) + '</div>';
+  }}
+
+  // Tasks
+  if (conv.tasks && conv.tasks.length > 0) {{
+    const done = conv.tasks.filter(t => t.status === 'completed').length;
+    html += '<details style="margin-bottom:14px;font-size:12px">'
+      + '<summary style="cursor:pointer;color:var(--text-secondary);font-weight:600">Tasks (' + done + '/' + conv.tasks.length + ' completed)</summary>'
+      + '<div style="margin-top:6px;padding:8px 12px;background:var(--bg-sidebar);border-radius:6px;font-size:12px;line-height:2">';
+    for (const t of conv.tasks) {{
+      const check = t.status === 'completed' ? '&#9745;' : '&#9744;';
+      const style = t.status === 'completed' ? 'color:var(--sage)' : 'color:var(--text)';
+      html += '<div style="' + style + '">' + check + ' ' + esc(t.subject) + '</div>';
+    }}
+    html += '</div></details>';
+  }}
+
+  // Todos
+  if (conv.todos && conv.todos.length > 0) {{
+    const done = conv.todos.filter(t => t.status === 'completed').length;
+    html += '<details style="margin-bottom:14px;font-size:12px">'
+      + '<summary style="cursor:pointer;color:var(--text-secondary);font-weight:600">Todos (' + done + '/' + conv.todos.length + ' done)</summary>'
+      + '<div style="margin-top:6px;padding:8px 12px;background:var(--bg-sidebar);border-radius:6px;font-size:12px;line-height:2">';
+    for (const t of conv.todos) {{
+      const check = t.status === 'completed' ? '&#9745;' : '&#9744;';
+      const style = t.status === 'completed' ? 'color:var(--sage)' : 'color:var(--text)';
+      html += '<div style="' + style + '">' + check + ' ' + esc(t.content) + '</div>';
+    }}
+    html += '</div></details>';
+  }}
 
   // Files touched
   if (conv.files_touched && conv.files_touched.length > 0) {{
@@ -1243,6 +1380,7 @@ function render() {{
   else renderBranchView();
   const f = filterConvs(conversations);
   document.getElementById('stats').textContent = f.length + ' conversations · ' + projects.length + ' projects';
+  document.getElementById('user-greeting').textContent = USER.name ? 'Hi, ' + USER.name : '';
 }}
 
 function selectProject(path) {{
