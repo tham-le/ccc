@@ -2,7 +2,7 @@
 
 A colorful conversation history browser for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Zero dependencies. Just Python 3.10+ and a browser.
 
-![Dark mode](image/dark-mode.png)
+![Dark mode](image/darkmode.png)
 
 ## Why
 
