@@ -1299,7 +1299,8 @@ def _build_html(show_all: bool = False) -> str:
 
     if not show_all:
         cwd = os.getcwd()
-        filtered = {p: c for p, c in projects.items() if p.startswith(cwd) or cwd.startswith(p)}
+        # Match projects under cwd, or the exact project that contains cwd
+        filtered = {p: c for p, c in projects.items() if p.startswith(cwd) or p == cwd}
         if filtered:
             projects = filtered
             print(f"Filtered to {cwd}", file=sys.stderr)
