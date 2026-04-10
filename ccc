@@ -815,9 +815,9 @@ body {{
   </div>
   <div class="stats" id="stats"></div>
   <div class="view-toggle">
-    <button id="btn-project" class="active" onclick="setView('project')">Projects</button>
+    <button id="btn-project" onclick="setView('project')">Projects</button>
     <button id="btn-timeline" onclick="setView('timeline')">Timeline</button>
-    <button id="btn-branch" onclick="setView('branch')">Branches</button>
+    <button id="btn-branch" class="active" onclick="setView('branch')">Branches</button>
   </div>
   <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle theme"></button>
 </div>
@@ -842,7 +842,7 @@ const conversations = {conversations_json};
 const projects = {projects_json};
 const HOME = {home_json};
 
-let currentView = 'project';
+let currentView = 'branch';
 let currentProject = null;
 let searchQuery = '';
 
@@ -1253,7 +1253,7 @@ document.addEventListener('keydown', (e) => {{
 
 // Theme
 function getTheme() {{
-  return localStorage.getItem('ccc-theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  return localStorage.getItem('ccc-theme') || 'dark';
 }}
 function applyTheme(t) {{
   document.documentElement.setAttribute('data-theme', t);
