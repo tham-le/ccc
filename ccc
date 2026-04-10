@@ -4,15 +4,15 @@
 A colorful conversation history browser for Claude Code.
 Zero dependencies. Just Python 3.10+ and a browser.
 
-Usage: ccc [--no-open] [-o FILE]
+Usage: ccc [--all] [--serve [PORT]] [--no-open] [-o FILE]
 """
 
 import json
 import os
+import re
 import sys
 import argparse
 import webbrowser
-import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -66,7 +66,6 @@ def _extract_text(content) -> str:
 
 def _clean_title(text: str, git_branch: str = "") -> str:
     """Turn a raw first message into a short readable title."""
-    import re
     t = text.strip()
     # Strip code blocks
     t = re.sub(r"```[\s\S]*?```", "", t)
@@ -585,8 +584,6 @@ body {{
   padding: 20px 24px;
 }}
 
-
-
 /* Cards */
 .conv-card {{
   background: var(--bg-card);
@@ -827,7 +824,7 @@ body {{
   <div class="content" id="content"></div>
 </div>
 
-<div class="viewer-overlay" id="viewer-overlay" onclick="closeViewer(event)">
+<div class="viewer-overlay" id="viewer-overlay" onclick="closeViewer()">
   <div class="viewer" onclick="event.stopPropagation()">
     <div class="viewer-header">
       <h2 id="viewer-title"></h2>
@@ -923,15 +920,9 @@ function buildTree() {{
     let node = tree;
     for (const part of parts) {{
       if (!node[part]) node[part] = {{ _children: {{}}, _projects: [] }};
+      if (part === parts[parts.length - 1]) node[part]._projects.push(p);
       node = node[part]._children;
     }}
-    // Walk back to the leaf and attach project data
-    let leaf = tree;
-    for (const part of parts) leaf = leaf[part]._children;
-    // Attach to the parent node
-    let parent = tree;
-    for (let i = 0; i < parts.length - 1; i++) parent = parent[parts[i]]._children;
-    parent[parts[parts.length - 1]]._projects.push(p);
   }}
   return tree;
 }}
@@ -1097,8 +1088,7 @@ function openViewer(sessionId) {{
   overlay.classList.add('open');
 }}
 
-function closeViewer(e) {{
-  if (e && e.target !== e.currentTarget) return;
+function closeViewer() {{
   document.getElementById('viewer-overlay').classList.remove('open');
 }}
 
